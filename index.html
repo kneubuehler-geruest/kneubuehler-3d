@@ -66,8 +66,8 @@
   </div>
 
   <div id="codekarte" class="karte" style="display:none">
-    <b>Firmen-Code eingeben (nur einmal)</b>
-    <div class="leise">Den Code bekommst du im Büro. Danach siehst du hier alle Gerüste.</div>
+    <b>Code eingeben (nur einmal)</b>
+    <div class="leise">Deinen Code bekommst du im Büro. Danach siehst du hier die Gerüste, die das Büro für dich freigibt.</div>
     <input id="code" class="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX">
     <button id="codeok" class="gross">Weiter</button>
   </div>
@@ -89,9 +89,9 @@
       «Gebäude» blendet das Haus aus, «?» zeigt die Hilfe.</div>
   </div>
 
-  <footer><span id="fuss">KNEUBÜHLER GERÜSTBAU · App-Version 1.91.0</span><br>
+  <footer><span id="fuss">KNEUBÜHLER GERÜSTBAU · App-Version 1.92.0</span><br>
     <label class="klein" style="cursor:pointer;text-decoration:underline">Datei von Hand öffnen<input id="datei" type="file" accept=".html,.htm,.kg3d,text/html,application/octet-stream" multiple style="display:none"></label>
-    · <button class="klein" id="aktualisieren">Liste aktualisieren</button> · <button class="klein" id="codeneu">Firmen-Code ändern</button></footer>
+    · <button class="klein" id="aktualisieren">Liste aktualisieren</button> · <button class="klein" id="codeneu">Code ändern</button></footer>
 </div>
 
 <div id="ansicht">
@@ -104,9 +104,9 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const VERSION = "1.91.0";
+const VERSION = "1.92.0";
 const enc = new TextEncoder(), dec = new TextDecoder();
-let db = null, schluessel = null, liste = null, pruef = null;
+let db = null, schluessel = null, kRoh = null, marke = "", liste = null, pruef = null;
 
 // ---------- Speicher (IndexedDB) ----------
 function dbOeffnen() {
@@ -149,6 +149,27 @@ async function codeZuSchluessel(code) {
 async function aesSchluessel(roh) { return crypto.subtle.importKey("raw", roh, "AES-GCM", false, ["decrypt"]); }
 async function auf(key, blob) { return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: blob.slice(0, 12) }, key, blob.slice(12))); }
 
+function verbinden(...teile) { const n = teile.reduce((s, x) => s + x.length, 0), u = new Uint8Array(n); let i = 0; for (const x of teile) { u.set(x, i); i += x.length; } return u; }
+async function hmac16(roh, daten) {
+  const k = await crypto.subtle.importKey("raw", roh, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", k, daten)).slice(0, 16);
+}
+async function codeMarke(roh) { return bytesZuB64(await hmac16(roh, enc.encode("KG3D-code"))); }
+async function auspacken(roh, id, e) {          // 1.92.0: Modell-Schlüssel aus dem Eintrag für diesen Code (sonst null)
+  const pad = new Uint8Array(await crypto.subtle.digest("SHA-256", verbinden(enc.encode("KG3D-wrap|"), roh, enc.encode("|" + id))));
+  const w = b64zuBytes(e.w), km = new Uint8Array(32); for (let i = 0; i < 32; i++) km[i] = w[i] ^ pad[i];
+  const t = await hmac16(roh, verbinden(enc.encode("KG3D-tag|" + id + "|"), km));
+  return bytesZuB64(t) === e.t ? km : null;
+}
+async function codesLaden() {
+  try {
+    const r = await fetch("modelle/codes.json?t=" + Date.now(), { cache: "no-store" });
+    if (r.ok) { const c = await r.json(); return new Set(c.codes || []); }
+    if (r.status === 404) return new Set();      // noch keine Monteur-Codes (PLAN MAX vor 0.1.12)
+  } catch (e) {}
+  return null;                                  // ohne Internet
+}
+
 async function pruefLaden() {
   try { const r = await fetch("modelle/pruef.json", { cache: "no-store" }); if (r.ok) { pruef = await r.json(); await einstSetzen({ id: "pruef", wert: pruef }); return; } } catch (e) {}
   const p = await einst("pruef"); if (p) pruef = p.wert;
@@ -159,12 +180,16 @@ async function codePruefen() {
   if (!pruef) { meldung("Zum ersten Einrichten braucht es einmal Internet."); return; }
   $("codeok").disabled = true; $("codeok").textContent = "Wird geprüft …";
   try {
-    const roh = await codeZuSchluessel(code); const key = await aesSchluessel(roh);
-    const t = dec.decode(await auf(key, b64zuBytes(pruef.pruef)));
-    if (t !== "KNEUBUEHLER-3D") throw new Error("falsch");
-    await einstSetzen({ id: "schluessel", roh }); schluessel = key; $("code").value = "";
+    const roh = await codeZuSchluessel(code); const m = await codeMarke(roh);
+    let gut = !!pruef.buero && m === pruef.buero;                       // Büro-Code (sieht alle)
+    if (!gut && pruef.buero) { const codes = await codesLaden(); if (codes === null) throw new Error("netz"); gut = codes.has(m); }
+    if (!gut && !pruef.buero) {                                         // alte Prüfdatei (App 1.91): Firmen-Code
+      try { gut = dec.decode(await auf(await aesSchluessel(roh), b64zuBytes(pruef.pruef))) === "KNEUBUEHLER-3D"; } catch (e) { gut = false; }
+    }
+    if (!gut) throw new Error("falsch");
+    await einstSetzen({ id: "schluessel", roh, marke: m }); kRoh = roh; marke = m; schluessel = await aesSchluessel(roh); $("code").value = "";
     $("codekarte").style.display = "none"; meldung(""); await listeLaden(); zeigeListe();
-  } catch (e) { meldung("Der Firmen-Code stimmt nicht. Bitte nochmals eingeben."); }
+  } catch (e) { meldung(e.message === "netz" ? "Zum Prüfen des Codes braucht es einmal Internet." : "Der Code stimmt nicht. Bitte nochmals eingeben."); }
   $("codeok").disabled = false; $("codeok").textContent = "Weiter";
 }
 
@@ -175,11 +200,28 @@ async function listeLaden() {
     const r = await fetch("modelle/liste.json?t=" + Date.now(), { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
     const L = await r.json(); const out = [];
+    const codes = await codesLaden();
+    if (codes && marke && pruef && pruef.buero && marke !== pruef.buero && !codes.has(marke)) { await widerrufen(); return; }   // Code in PLAN MAX entfernt
     for (const s of (L.modelle || [])) {
-      try { out.push({ seite: s, meta: JSON.parse(dec.decode(await auf(schluessel, b64zuBytes(s.meta)))) }); } catch (e) { /* anderer Code */ }
+      try {
+        if (s.v === 2) {                                                // 1.92.0: nur, wenn für diesen Code freigegeben
+          let km = null; for (const e of (s.zugriff || [])) { km = await auspacken(kRoh, s.id, e); if (km) break; }
+          if (!km) continue;
+          out.push({ seite: s, km, meta: JSON.parse(dec.decode(await auf(await aesSchluessel(km), b64zuBytes(s.meta)))) });
+        } else out.push({ seite: s, km: null, meta: JSON.parse(dec.decode(await auf(schluessel, b64zuBytes(s.meta)))) });
+      } catch (e) { /* nicht für diesen Code */ }
     }
     liste = { stand: L.stand || "", modelle: out };
+    // nicht mehr freigegeben → vom iPad (nur Gerüste aus der Liste; eine neuere Version desselben Projekts ersetzt beim Laden)
+    const ids = new Set(out.map(x => x.seite.id)), proj = new Set(out.map(x => x.seite.projekt)); let weg = 0;
+    for (const m of await alle()) if (m.quelle === "liste" && !ids.has(m.id) && !proj.has(m.projekt)) { await loeschen(m.id); weg++; }
+    if (weg) meldung(weg + (weg === 1 ? " Gerüst ist" : " Gerüste sind") + " nicht mehr für dich freigegeben und wurde" + (weg === 1 ? "" : "n") + " vom iPad entfernt.");
   } catch (e) { liste = null; }
+}
+async function widerrufen() {
+  for (const m of await alle()) if (m.quelle === "liste") await loeschen(m.id);
+  await einstSetzen({ id: "schluessel", roh: null, marke: "" }); kRoh = null; marke = ""; schluessel = null; liste = null;
+  $("codekarte").style.display = "block"; meldung("Dein Code gilt nicht mehr – die Gerüste wurden vom iPad entfernt. Bitte im Büro einen neuen Code holen.");
 }
 
 function eintrag(titel, info, neu, knoepfe, klick) {
@@ -226,10 +268,12 @@ function ansichtHtml(titel, kopfJson, datenB64) {
   const t = String(titel).replace(/&/g, "&amp;").replace(/</g, "&lt;");
   return VORLAGE.split("__KOPF__").join(kopfJson.replace(/<\//g, "<\\/")).split("__DATEN__").join(datenB64).split("__TITEL__").join(t);
 }
-async function modellAusBytes(blob) {
-  if (dec.decode(blob.slice(0, 5)) !== "KG3D1") throw new Error("keine Modell-Datei von KNEUBÜHLER 3D");
-  if (!schluessel) throw new Error("zuerst den Firmen-Code eingeben");
-  const innen = await auf(schluessel, blob.slice(5));
+async function modellAusBytes(blob, km) {
+  const art = dec.decode(blob.slice(0, 5));
+  if (art !== "KG3D1" && art !== "KG3D2") throw new Error("keine Modell-Datei von KNEUBÜHLER 3D");
+  if (art === "KG3D2" && !km) throw new Error("diese Datei geht nur über die Liste in der App (für dich freigegeben)");
+  if (art === "KG3D1" && !schluessel) throw new Error("zuerst den Code eingeben");
+  const innen = await auf(art === "KG3D2" ? await aesSchluessel(km) : schluessel, blob.slice(5));
   if (dec.decode(innen.slice(0, 4)) !== "KGM1") throw new Error("Modell-Datei beschädigt");
   const lk = new DataView(innen.buffer, innen.byteOffset + 4, 4).getUint32(0);
   const kopfJson = dec.decode(await gunzip(innen.slice(8, 8 + lk)));
@@ -241,7 +285,7 @@ async function laden(x, oeffnen) {
   try {
     const r = await fetch("modelle/" + x.seite.datei, { cache: "no-store" });
     if (!r.ok) throw new Error("Datei nicht gefunden (" + r.status + ")");
-    const m = await modellAusBytes(new Uint8Array(await r.arrayBuffer()));
+    const m = await modellAusBytes(new Uint8Array(await r.arrayBuffer()), x.km);
     const rec = { id: x.seite.id, projekt: x.seite.projekt, titel: x.meta.titel || m.kopf.titel || "Gerüst", version: x.meta.version || "", system: x.meta.system || "",
                   erstellt: x.meta.erstellt || m.kopf.erstellt || "", groesse: x.seite.groesse, html: m.html, gespeichert: Date.now(), quelle: "liste" };
     await speichern(rec);
@@ -300,7 +344,7 @@ $("codeneu").addEventListener("click", () => { $("codekarte").style.display = "b
   if ("serviceWorker" in navigator) { try { await navigator.serviceWorker.register("sw.js"); } catch (e) {} }
   await pruefLaden();
   const s = await einst("schluessel");
-  if (s && s.roh) { try { schluessel = await aesSchluessel(s.roh); } catch (e) { schluessel = null; } }
+  if (s && s.roh) { try { kRoh = new Uint8Array(s.roh); schluessel = await aesSchluessel(kRoh); marke = s.marke || await codeMarke(kRoh); } catch (e) { schluessel = null; kRoh = null; } }
   if (!schluessel) { $("codekarte").style.display = "block"; await zeigeListe(); return; }
   await zeigeListe(); await listeLaden(); zeigeListe();
 })();

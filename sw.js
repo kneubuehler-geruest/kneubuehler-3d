@@ -1,6 +1,6 @@
-// KNEUBÜHLER 3D – ohne Internet (App-Version 1.91.0): App-Dateien im Speicher, mit Internet im Hintergrund nachgeladen.
-// Die Liste und die Modelle (modelle/…) gehen immer übers Netz – die geladenen Gerüste speichert die App selbst (IndexedDB).
-const CACHE = "kneubuehler-3d-1.91.0";
+// KNEUBÜHLER 3D – ohne Internet (App-Version 1.92.0): App-Dateien im Speicher, mit Internet im Hintergrund nachgeladen.
+// Die Liste und die Modelle (modelle/…) gehen immer übers Netz, die Kunden-Links (k/…) gehören nicht zur App – die geladenen Gerüste speichert die App selbst (IndexedDB).
+const CACHE = "kneubuehler-3d-1.92.0";
 const DATEIEN = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-512.png"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(DATEIEN)).then(() => self.skipWaiting()));
@@ -11,7 +11,7 @@ self.addEventListener("activate", e => {
 });
 self.addEventListener("fetch", e => {
   const r = e.request, u = new URL(r.url);
-  if (r.method !== "GET" || u.origin !== self.location.origin || u.pathname.indexOf("/modelle/") >= 0) return;
+  if (r.method !== "GET" || u.origin !== self.location.origin || u.pathname.indexOf("/modelle/") >= 0 || u.pathname.indexOf("/k/") >= 0) return;   // 1.92.0: Kunden-Links (k/…) nie aus der App
   const netz = fetch(r).then(a => {
     if (a && a.ok) { const k = a.clone(); caches.open(CACHE).then(c => c.put(r, k)); }
     return a;
