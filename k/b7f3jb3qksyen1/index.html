@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow"><meta name="referrer" content="no-referrer"><title>KNEUBÜHLER GERÜSTBAU – 3D-Ansicht</title>
+<style>html,body{margin:0;height:100%;background:#e9ecf1;color:#1d2330;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+#info{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:16px}
+h1{font-size:20px;letter-spacing:.08em;margin:0 0 8px}p{color:#5d6575;margin:0}
+iframe{position:fixed;inset:0;width:100%;height:100%;border:0;display:none;background:#e9ecf1}</style></head>
+<body><div id="info"><div><h1>KNEUBÜHLER GERÜSTBAU</h1><p id="t">3D-Ansicht wird geladen …</p></div></div>
+<iframe id="r" title="3D-Ansicht" allow="fullscreen"></iframe>
+<script>
+"use strict";
+const K=new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,
+0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,
+0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,
+0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+const H0=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+const W=new Uint32Array(64);
+function block(m,out){            // SHA-256 eines 48-Byte-Blocks (m: 12 Wörter) → 8 Wörter
+  for(let i=0;i<12;i++)W[i]=m[i]; W[12]=0x80000000; W[13]=0; W[14]=0; W[15]=384;
+  for(let i=16;i<64;i++){const a=W[i-15],b=W[i-2];W[i]=(W[i-16]+(((a>>>7)|(a<<25))^((a>>>18)|(a<<14))^(a>>>3))+W[i-7]+(((b>>>17)|(b<<15))^((b>>>19)|(b<<13))^(b>>>10)))|0;}
+  let a=H0[0],b=H0[1],c=H0[2],d=H0[3],e=H0[4],f=H0[5],g=H0[6],h=H0[7];
+  for(let i=0;i<64;i++){const t1=(h+(((e>>>6)|(e<<26))^((e>>>11)|(e<<21))^((e>>>25)|(e<<7)))+((e&f)^(~e&g))+K[i]+W[i])|0;
+    const t2=((((a>>>2)|(a<<30))^((a>>>13)|(a<<19))^((a>>>22)|(a<<10)))+((a&b)^(a&c)^(b&c)))|0;h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0;}
+  out[0]=(a+H0[0])|0;out[1]=(b+H0[1])|0;out[2]=(c+H0[2])|0;out[3]=(d+H0[3])|0;out[4]=(e+H0[4])|0;out[5]=(f+H0[5])|0;out[6]=(g+H0[6])|0;out[7]=(h+H0[7])|0;
+}
+const be=(u,i)=>((u[i]<<24)|(u[i+1]<<16)|(u[i+2]<<8)|u[i+3])>>>0;
+const te=new TextEncoder();
+function zus(...x){const n=x.reduce((s,a)=>s+a.length,0),u=new Uint8Array(n);let i=0;for(const a of x){u.set(a,i);i+=a.length;}return u;}
+function text(s){document.getElementById("t").textContent=s;}
+(async()=>{
+  try{
+    const h=location.hash.replace(/^#/,"").split("&")[0];
+    if(!h)throw"Der Link ist unvollständig – bitte den ganzen Link aus unserer Nachricht verwenden.";
+    if(!window.crypto||!crypto.subtle||typeof DecompressionStream==="undefined")throw"Dieser Browser ist zu alt. Bitte mit aktuellem Safari, Chrome, Edge oder Firefox öffnen.";
+    const s=atob(h.replace(/-/g,"+").replace(/_/g,"/")+"===".slice((h.length+3)%4)),key=new Uint8Array(s.length);for(let i=0;i<s.length;i++)key[i]=s.charCodeAt(i);
+    const r=await fetch("d.bin",{cache:"no-cache"});
+    if(!r.ok)throw"Diese 3D-Ansicht ist nicht mehr verfügbar.";
+    const d=new Uint8Array(await r.arrayBuffer());
+    if(String.fromCharCode(d[0],d[1],d[2],d[3])!=="KGK1")throw"Diese 3D-Ansicht ist beschädigt.";
+    const nonce=d.subarray(4,16),tag=d.subarray(16,48),ct=d.subarray(48);
+    const kenc=new Uint8Array(await crypto.subtle.digest("SHA-256",zus(te.encode("KGK-enc"),key)));
+    const kmac=new Uint8Array(await crypto.subtle.digest("SHA-256",zus(te.encode("KGK-mac"),key)));
+    const mk=await crypto.subtle.importKey("raw",kmac,{name:"HMAC",hash:"SHA-256"},false,["verify"]);
+    if(!(await crypto.subtle.verify("HMAC",mk,tag,zus(te.encode("KGK1"),nonce,ct))))throw"Der Link stimmt nicht – bitte den ganzen Link aus unserer Nachricht verwenden.";
+    const m=new Uint32Array(12),o=new Uint32Array(8),gz=new Uint8Array(ct.length);
+    for(let i=0;i<8;i++)m[i]=be(kenc,i*4); for(let i=0;i<3;i++)m[8+i]=be(nonce,i*4);
+    for(let z=0,p=0;p<ct.length;z++,p+=32){m[11]=z;block(m,o);for(let j=0;j<32&&p+j<ct.length;j++)gz[p+j]=ct[p+j]^((o[j>>2]>>>(24-8*(j&3)))&255);}
+    const html=await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+    const ti=html.match(/<title>([^<]*)<\/title>/i);if(ti)document.title=ti[1].replace(/&amp;/g,"&").replace(/&lt;/g,"<");
+    const f=document.getElementById("r");f.addEventListener("load",()=>{document.getElementById("info").style.display="none";},{once:true});
+    f.srcdoc=html;f.style.display="block";
+  }catch(e){text(typeof e==="string"?e:"Die 3D-Ansicht konnte nicht geöffnet werden ("+(e&&e.message||e)+").");}
+})();
+</script></body></html>
