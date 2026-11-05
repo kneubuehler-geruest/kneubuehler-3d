@@ -1,7 +1,7 @@
-// KNEUBÜHLER 3D – ohne Internet (App-Version 1.93.0): App-Dateien im Speicher, mit Internet im Hintergrund nachgeladen.
+// KNEUBÜHLER 3D – ohne Internet (App-Version 1.96.0): App-Dateien im Speicher, mit Internet im Hintergrund nachgeladen.
 // Die Liste und die Modelle (modelle/…) gehen immer übers Netz, die Kunden-Links (k/…) gehören nicht zur App – die geladenen Gerüste speichert die App selbst (IndexedDB).
-const CACHE = "kneubuehler-3d-1.93.0";
-const DATEIEN = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-512.png"];
+const CACHE = "kneubuehler-3d-1.96.0";
+const DATEIEN = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-512.png", "./pdf.min.js", "./pdf.worker.min.js"];   // 1.96.0: pdf.js
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(DATEIEN)).then(() => self.skipWaiting()));
 });

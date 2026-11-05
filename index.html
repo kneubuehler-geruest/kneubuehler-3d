@@ -53,6 +53,18 @@
   #zurueck { border:1px solid var(--rand); background:rgba(255,255,255,.95); color:var(--text); border-radius:22px; min-height:44px; padding:0 18px;
     font-size:15px; font-weight:600; box-shadow:0 2px 10px rgba(0,0,0,.15); cursor:pointer; }
   #warten { position:fixed; inset:0; background:rgba(244,245,247,.85); display:none; align-items:center; justify-content:center; z-index:20; font-weight:600; }
+  /* 1.96.0: Plan und Materialliste */
+  .pdfknopf { border:1px solid var(--rand); background:rgba(255,255,255,.95); color:var(--text); border-radius:22px; min-height:44px; padding:0 16px;
+    font-size:15px; font-weight:600; box-shadow:0 2px 10px rgba(0,0,0,.15); cursor:pointer; }
+  #pdf { position:fixed; inset:0; background:#5d6575; display:none; z-index:15; flex-direction:column; }
+  #pdfleiste { display:flex; align-items:center; gap:8px; padding:calc(8px + env(safe-area-inset-top)) 10px 8px; background:#fff; border-bottom:1px solid var(--rand); }
+  #pdfleiste .titel { flex:1; min-width:0; font-weight:600; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #pdfleiste button { border:1px solid var(--rand); background:#fff; color:var(--text); border-radius:10px; min-height:42px; min-width:44px; padding:0 12px; font-size:16px; font-weight:600; cursor:pointer; }
+  #pdfseiten { flex:1; overflow:auto; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; padding:12px 0 calc(24px + env(safe-area-inset-bottom)); }
+  #pdfinnen { transform-origin:0 0; }
+  .pdfseite { background:#fff; margin:0 auto 12px; box-shadow:0 2px 12px rgba(0,0,0,.35); position:relative; }
+  .pdfseite canvas { display:block; width:100%; height:100%; }
+  .pdfseite .nr { position:absolute; right:8px; bottom:6px; font-size:12px; color:var(--leise); background:rgba(255,255,255,.8); padding:1px 6px; border-radius:6px; }
 </style>
 </head>
 <body>
@@ -90,14 +102,19 @@
       «Gebäude» blendet das Haus aus, «?» zeigt die Hilfe.</div>
   </div>
 
-  <footer><span id="fuss">KNEUBÜHLER GERÜSTBAU · App-Version 1.93.0</span><br>
+  <footer><span id="fuss">KNEUBÜHLER GERÜSTBAU · App-Version 1.96.0</span><br>
     <label class="klein" style="cursor:pointer;text-decoration:underline">Datei von Hand öffnen<input id="datei" type="file" accept=".html,.htm,.kg3d,text/html,application/octet-stream" multiple style="display:none"></label>
     · <button class="klein" id="aktualisieren">Liste aktualisieren</button> · <button class="klein" id="codeneu">Code ändern</button></footer>
 </div>
 
 <div id="ansicht">
   <iframe id="rahmen" title="3D-Ansicht" sandbox="allow-scripts"></iframe>
-  <div id="unten"><button id="zurueck">‹ Alle Gerüste</button></div>
+  <div id="unten"><button id="zurueck">‹ Alle Gerüste</button><span id="pdfknoepfe" style="display:contents"></span></div>
+</div>
+<div id="pdf">
+  <div id="pdfleiste"><button id="pdfzu">‹ 3D</button><span class="titel" id="pdftitel"></span>
+    <button id="pdfklein" aria-label="kleiner">−</button><button id="pdfgross" aria-label="grösser">+</button></div>
+  <div id="pdfseiten"><div id="pdfinnen"></div></div>
 </div>
 <div id="warten">Wird geladen …</div>
 
@@ -283,7 +300,7 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const VERSION = "1.93.0";
+const VERSION = "1.96.0";
 const enc = new TextEncoder(), dec = new TextDecoder();
 let db = null, schluessel = null, kRoh = null, marke = "", liste = null, pruef = null;
 let aktuell = null, bk = null, nachricht = null;          // 1.93.0: offenes Gerüst, Briefkasten-Adresse, Fenster «Nachricht»
@@ -458,9 +475,15 @@ async function modellAusBytes(blob, km) {
   const innen = await auf(art === "KG3D2" ? await aesSchluessel(km) : schluessel, blob.slice(5));
   if (dec.decode(innen.slice(0, 4)) !== "KGM1") throw new Error("Modell-Datei beschädigt");
   const lk = new DataView(innen.buffer, innen.byteOffset + 4, 4).getUint32(0);
-  const kopfJson = dec.decode(await gunzip(innen.slice(8, 8 + lk)));
+  let kopfJson = dec.decode(await gunzip(innen.slice(8, 8 + lk)));
   const kopf = JSON.parse(kopfJson);
-  return { kopf, html: ansichtHtml((kopf.titel || "Gerüst") + "", kopfJson, bytesZuB64(innen.slice(8 + lk))) };
+  let anhaenge = [];                                                 // 1.96.0: Plan und Materialliste (PDF) im Modell
+  if (Array.isArray(kopf.anhaenge)) {
+    anhaenge = kopf.anhaenge.filter(a => a && a.b64).map(a => ({ art: String(a.art || ""), titel: String(a.titel || a.art || "PDF"), name: String(a.name || ""),
+                                                                   daten: b64zuBytes(a.b64) }));
+    delete kopf.anhaenge; kopfJson = JSON.stringify(kopf);
+  }
+  return { kopf, anhaenge, html: ansichtHtml((kopf.titel || "Gerüst") + "", kopfJson, bytesZuB64(innen.slice(8 + lk))) };
 }
 async function laden(x, oeffnen) {
   warten(true, "Wird geladen … " + (x.meta.titel || ""));
@@ -470,7 +493,7 @@ async function laden(x, oeffnen) {
     const m = await modellAusBytes(new Uint8Array(await r.arrayBuffer()), x.km);
     const rec = { id: x.seite.id, projekt: x.seite.projekt, titel: x.meta.titel || m.kopf.titel || "Gerüst", version: x.meta.version || "", system: x.meta.system || "",
                   erstellt: x.meta.erstellt || m.kopf.erstellt || "", groesse: x.seite.groesse, html: m.html, gespeichert: Date.now(), quelle: "liste",
-                  km: x.km || null };                                  // 1.93.0: Modell-Schlüssel für das Fenster «Nachricht»
+                  km: x.km || null, anhaenge: m.anhaenge || [] };      // 1.93.0: Modell-Schlüssel für das Fenster «Nachricht» · 1.96.0: Plan/Materialliste
     await speichern(rec);
     for (const alt of await alle()) if (alt.projekt && alt.projekt === rec.projekt && alt.id !== rec.id) await loeschen(alt.id);   // ältere Version ersetzt
     warten(false); meldung("");
@@ -487,11 +510,108 @@ async function zeigen(id) {
   const m = await holen(id); if (!m) return zeigeListe();
   aktuell = m; $("rahmen").srcdoc = KG_ANTWORT_EINFUEGEN(m.html); $("ansicht").style.display = "block"; $("start").style.display = "none";
   if (nachricht) nachricht.zeigen(!!(m.km && bk));
+  pdfKnoepfe(m);
   try { history.pushState({ ansicht: id }, ""); } catch (e) {}
 }
-function zurueck() { aktuell = null; if (nachricht) nachricht.zeigen(false); $("ansicht").style.display = "none"; $("start").style.display = "block"; $("rahmen").srcdoc = "<!DOCTYPE html><title>leer</title>"; zeigeListe(); }
+function zurueck() { pdfZu(); $("pdfknoepfe").textContent = ""; aktuell = null; if (nachricht) nachricht.zeigen(false); $("ansicht").style.display = "none"; $("start").style.display = "block"; $("rahmen").srcdoc = "<!DOCTYPE html><title>leer</title>"; zeigeListe(); }
 $("zurueck").addEventListener("click", () => { if (history.state && history.state.ansicht) history.back(); else zurueck(); });
-window.addEventListener("popstate", () => { if ($("ansicht").style.display === "block") zurueck(); });
+window.addEventListener("popstate", () => { if (pdfOffen) { pdfZu(); return; } if ($("ansicht").style.display === "block") zurueck(); });
+
+// ---------- 1.96.0: Plan und Materialliste (PDF, ohne Internet mit pdf.js) ----------
+let pdfLib = null, pdfDok = null, pdfOffen = false, pdfZoom = 1, pdfBeob = null, pdfSeiten = [], pdfLauf = 0;
+function pdfKnoepfe(m) {
+  const box = $("pdfknoepfe"); box.textContent = "";
+  for (const art of ["plan", "materialliste"]) {
+    const a = (m.anhaenge || []).find(x => x.art === art); if (!a) continue;
+    const k = document.createElement("button"); k.className = "pdfknopf"; k.id = "pdf-" + art; k.textContent = a.titel || art;
+    k.addEventListener("click", () => pdfOeffnen(a)); box.append(k);
+  }
+}
+async function pdfjsLaden() {
+  if (pdfLib) return pdfLib;
+  await new Promise((ok, nein) => { const sc = document.createElement("script"); sc.src = "pdf.min.js"; sc.onload = ok; sc.onerror = () => nein(new Error("pdf.min.js fehlt")); document.head.append(sc); });
+  const lib = window.pdfjsLib; if (!lib) throw new Error("pdf.js nicht geladen");
+  const r = await fetch("pdf.worker.min.js"); if (!r.ok) throw new Error("pdf.worker.min.js fehlt");   // über den Service Worker – auch ohne Internet
+  lib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: "text/javascript" }));
+  pdfLib = lib; return lib;
+}
+async function pdfOeffnen(a) {
+  warten(true, a.titel + " wird geöffnet …");
+  try {
+    const lib = await pdfjsLaden();
+    if (pdfDok) { try { pdfDok.destroy(); } catch (e) {} pdfDok = null; }
+    pdfDok = await lib.getDocument({ data: new Uint8Array(a.daten), isEvalSupported: false }).promise;
+    $("pdftitel").textContent = a.titel + (aktuell ? " · " + (aktuell.titel || "") + (aktuell.version ? " " + aktuell.version : "") : "");
+    pdfZoom = 1; pdfSeiten = [];
+    for (let i = 1; i <= pdfDok.numPages; i++) { const p = await pdfDok.getPage(i); const v = p.getViewport({ scale: 1 }); pdfSeiten.push({ nr: i, w: v.width, h: v.height, gemalt: 0, el: null }); }
+    $("pdf").style.display = "flex"; pdfOffen = true;
+    try { history.pushState({ pdf: 1 }, ""); } catch (e) {}
+    pdfAufbauen(); $("pdfseiten").scrollTop = 0; $("pdfseiten").scrollLeft = 0;
+  } catch (e) { meldung("Plan/Materialliste ging nicht: " + (e.message || e)); }
+  warten(false);
+}
+function pdfZu() {
+  if (!pdfOffen) return; pdfOffen = false; $("pdf").style.display = "none";
+  if (pdfBeob) { pdfBeob.disconnect(); pdfBeob = null; }
+  $("pdfinnen").textContent = ""; pdfSeiten = [];
+  if (pdfDok) { try { pdfDok.destroy(); } catch (e) {} pdfDok = null; }
+}
+function pdfBreite() { return Math.max(200, $("pdfseiten").clientWidth - 24); }
+function pdfAufbauen() {
+  const innen = $("pdfinnen"); innen.textContent = ""; innen.style.transform = "";
+  if (pdfBeob) pdfBeob.disconnect();
+  pdfBeob = new IntersectionObserver(eintraege => { for (const e of eintraege) { const s = pdfSeiten[+e.target.dataset.i]; if (e.isIntersecting) pdfMalen(s); else pdfLeeren(s); } },
+                                     { root: $("pdfseiten"), rootMargin: "600px 600px" });
+  const B = pdfBreite() * pdfZoom; innen.style.width = (B + 24) + "px";
+  pdfSeiten.forEach((s, i) => {
+    const d = document.createElement("div"); d.className = "pdfseite"; d.dataset.i = i;
+    d.style.width = B + "px"; d.style.height = Math.round(B * s.h / s.w) + "px";
+    const n = document.createElement("span"); n.className = "nr"; n.textContent = (i + 1) + " / " + pdfSeiten.length; d.append(n);
+    s.el = d; s.gemalt = 0; innen.append(d); pdfBeob.observe(d);
+  });
+}
+async function pdfMalen(s) {
+  if (!pdfDok || !s.el || s.gemalt === pdfZoom) return;
+  const lauf = ++pdfLauf, z = pdfZoom, B = pdfBreite() * z;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let massstab = B / s.w * dpr; const maxPx = 12e6;                    // iPad: Canvas höchstens ca. 16 Mio. Pixel
+  if (s.w * s.h * massstab * massstab > maxPx) massstab = Math.sqrt(maxPx / (s.w * s.h));
+  const dok = pdfDok, c = document.createElement("canvas");
+  try {
+    const seite = await dok.getPage(s.nr); const v = seite.getViewport({ scale: massstab });
+    c.width = Math.floor(v.width); c.height = Math.floor(v.height);
+    await seite.render({ canvasContext: c.getContext("2d"), viewport: v }).promise;
+  } catch (e) { c.width = 0; c.height = 0; return; }                  // abgebrochen (zu, grösser/kleiner) – nichts zu tun
+  if (!s.el || z !== pdfZoom || dok !== pdfDok) { c.width = 0; c.height = 0; return; }
+  const alt = s.el.querySelector("canvas"); if (alt) { alt.width = 0; alt.height = 0; alt.remove(); }
+  s.el.prepend(c); s.gemalt = z;
+}
+function pdfLeeren(s) { if (!s || !s.el) return; const c = s.el.querySelector("canvas"); if (c) { c.width = 0; c.height = 0; c.remove(); } s.gemalt = 0; }
+function pdfZoomSetzen(neu, mx, my) {
+  neu = Math.max(1, Math.min(6, neu)); if (Math.abs(neu - pdfZoom) < 0.01) { $("pdfinnen").style.transform = ""; return; }
+  const box = $("pdfseiten"), r = box.getBoundingClientRect();
+  const px = (mx === undefined ? r.width / 2 : mx - r.left), py = (my === undefined ? r.height / 2 : my - r.top);
+  const fx = (box.scrollLeft + px) / pdfZoom, fy = (box.scrollTop + py) / pdfZoom;
+  pdfZoom = neu; pdfAufbauen();
+  box.scrollLeft = fx * pdfZoom - px; box.scrollTop = fy * pdfZoom - py;
+}
+$("pdfzu").addEventListener("click", () => { if (history.state && history.state.pdf) history.back(); else pdfZu(); });
+$("pdfgross").addEventListener("click", () => pdfZoomSetzen(pdfZoom * 1.5));
+$("pdfklein").addEventListener("click", () => pdfZoomSetzen(pdfZoom / 1.5));
+(() => {                                                              // zwei Finger zoomen (Vorschau mit CSS, danach neu malen)
+  const box = $("pdfseiten"); let start = null;
+  const abst = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  box.addEventListener("touchstart", e => { if (e.touches.length === 2) { start = { d: abst(e.touches), x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+    y: (e.touches[0].clientY + e.touches[1].clientY) / 2, f: 1 }; e.preventDefault(); } }, { passive: false });
+  box.addEventListener("touchmove", e => { if (!start || e.touches.length !== 2) return; e.preventDefault();
+    start.f = Math.max(1 / pdfZoom, Math.min(6 / pdfZoom, abst(e.touches) / start.d)); const r = box.getBoundingClientRect();
+    const ox = box.scrollLeft + start.x - r.left, oy = box.scrollTop + start.y - r.top;
+    $("pdfinnen").style.transformOrigin = ox + "px " + oy + "px"; $("pdfinnen").style.transform = "scale(" + start.f + ")"; }, { passive: false });
+  box.addEventListener("touchend", e => { if (!start || e.touches.length >= 2) return; const s = start; start = null; pdfZoomSetzen(pdfZoom * s.f, s.x, s.y); });
+  let tipp = 0; box.addEventListener("touchend", e => { if (e.touches.length || e.changedTouches.length !== 1) return; const t = Date.now();
+    if (t - tipp < 300) { const c = e.changedTouches[0]; pdfZoomSetzen(pdfZoom > 1.01 ? 1 : 2.5, c.clientX, c.clientY); tipp = 0; } else tipp = t; });
+  window.addEventListener("resize", () => { if (pdfOffen) pdfAufbauen(); });
+})();
 
 // ---------- von Hand öffnen (Monteur-Paket «…_3D_Messen_App.html» oder .kg3d) ----------
 $("datei").addEventListener("change", async ev => {
@@ -501,7 +621,8 @@ $("datei").addEventListener("change", async ev => {
       let rec;
       if (/\.kg3d$/i.test(f.name)) {
         const m = await modellAusBytes(new Uint8Array(await f.arrayBuffer()));
-        rec = { id: (m.kopf.titel || f.name) + "|" + (m.kopf.erstellt || ""), titel: m.kopf.titel || f.name, erstellt: m.kopf.erstellt || "", groesse: f.size, html: m.html };
+        rec = { id: (m.kopf.titel || f.name) + "|" + (m.kopf.erstellt || ""), titel: m.kopf.titel || f.name, erstellt: m.kopf.erstellt || "", groesse: f.size, html: m.html,
+                anhaenge: m.anhaenge || [] };
       } else {
         const text = await f.text(); const k = text.match(/<script id="kopfdaten" type="application\/json">([\s\S]*?)<\/script>/);
         if (!k || text.indexOf('id="geodaten"') < 0) throw new Error("«" + f.name + "» ist keine 3D-Datei von KNEUBÜHLER GERÜSTBAU.");
